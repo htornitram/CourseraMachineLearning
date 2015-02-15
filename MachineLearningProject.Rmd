@@ -1,0 +1,92 @@
+---
+title: "Exercise Activity Prediction"
+output: html_document
+---
+
+For the Coursera "Practical Machine Learning", we are using a data set derived from the study "Qualitative Activity Recognition of Weight Lifting Exercises" to train a machine learning model to predict the type of exercise being performed based on accelerometer data from a set of 19,622 cases. The model is then to be tested on a set of 20 cases, with results submitted separately for automated evaluation.
+
+The study can be found at http://groupware.les.inf.puc-rio.br/har
+
+> Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013. 
+
+First, we'll read in the training data and do some cleaning:
+
+```{r message=FALSE}
+train <- read.csv("pml-training.csv",na.strings=c("","NA"))
+c(ncol(train), sum(is.na(train[1,])))
+
+train <- train[,!is.na(train[1,])]
+names(train[1:7])
+
+train <- train[,-(1:7)]
+c(nrow(train), sum(complete.cases(train)))
+```
+
+There are quite a number of variables in the training data which have results in only a small percentage of cases - specifically, in cases where a new "window" was started under the data collection methodology. For our purposes, as there are far too few values present to reasonably impute the missing values, we'll remove those variables. Conveniently, the first row of data is missing exactly these values, so we can remove them in a simple manner.
+
+The first seven variables in the list contain a row number, the identification of the specific test subject, and timing-related variables. As we're not interpreting the data as a time sequence, we'll remove these as well.
+
+This leaves us with our 19,622 cases, all of which are complete. So there is no need to impute any missing values before starting the analysis.
+
+We'll use the Random Forest method to predict our outcomes. Based on suggestions in the course materials and elsewhere online, we'll use the "randomForest" package directly rather than through "caret"; this will provide much better performance with the fairly large data set.
+
+```{r message=FALSE}
+library(randomForest)
+set.seed(13579)
+
+f <- randomForest(classe ~ ., data=train)
+print(f)
+```
+
+The initial attempt using all remaining variables as predictors generates very good results. As explained in the documentation, the Random Forest methodology inherently performs internal cross-validation by repeated sampling to build its multiple trees, and it tracks and reports an overall "out of box" error rate -  in this case, a very low one.
+
+Still, there's always the risk of overfitting, so we'll take a look at which variables were most important in the analysis:
+
+```{r message=FALSE}
+f$importance[f$importance > 200,]
+```
+
+Of the 52 total predictor variables, 31 of them had an importance, based on the mean decrease in the Gini index, of over 200. We'll build another model based on these 31. Similarly, we'll build additional models based on the 17 variables with importance over 300 and on the 7 variables with importance over 500.
+
+```{r message=FALSE}
+f200 <- randomForest(classe ~ roll_belt + pitch_belt + yaw_belt + 
+          total_accel_belt + gyros_belt_z + accel_belt_z + magnet_belt_x + 
+          magnet_belt_y + magnet_belt_z + roll_arm + yaw_arm + accel_arm_x +
+          magnet_arm_x + magnet_arm_y + roll_dumbbell + yaw_dumbbell + 
+          total_accel_dumbbell + gyros_dumbbell_y + accel_dumbbell_x + 
+          accel_dumbbell_y + accel_dumbbell_z + magnet_dumbbell_x + 
+          magnet_dumbbell_y + magnet_dumbbell_z + roll_forearm + 
+          pitch_forearm + accel_forearm_x + accel_forearm_z + 
+          magnet_forearm_x + magnet_forearm_y + magnet_forearm_z, data = train)
+f300 <- randomForest(classe ~ roll_belt + pitch_belt + yaw_belt + 
+          gyros_belt_z + accel_belt_z + magnet_belt_y + magnet_belt_z + 
+          roll_arm + roll_dumbbell + accel_dumbbell_y + accel_dumbbell_z + 
+          magnet_dumbbell_x + magnet_dumbbell_y + magnet_dumbbell_z + 
+          roll_forearm + pitch_forearm + accel_forearm_x, data = train)
+f500 <- randomForest(classe ~ roll_belt + pitch_belt + yaw_belt + 
+          magnet_dumbbell_y + magnet_dumbbell_z + roll_forearm + 
+          pitch_forearm, data = train)
+
+data.frame(All = f$err.rate[f$ntree,1], 
+           Over200 = f200$err.rate[f200$ntree,1], 
+           Over300 = f300$err.rate[f300$ntree,1], 
+           Over500 = f500$err.rate[f500$ntree,1])
+```
+
+Using only the 31 most important predictors produces only a minuscule increase in the estimated out-of-sample error rate, but further cutting down the list produces larger jumps - still excellent results, but not quite as good.
+
+Therefore, we'll choose the "Over200" model as our final one for generating predictions on the test set. For comparison, though, we'll also predict using the other three models:
+
+```{r message=FALSE}
+test <- read.csv("pml-testing.csv",na.strings=c("","NA"))
+
+p200 <- predict(f200, test)
+
+pAll <- predict(f, test)
+p300 <- predict(f300, test)
+p500 <- predict(f500, test)
+
+c(identical(p200,pAll), identical(p200,p300), identical(p200,p500))
+```
+
+As it turns out, the four different random forests predict identical results for the 20 test cases. When submitted, all 20 cases were judged as correct predictions.
